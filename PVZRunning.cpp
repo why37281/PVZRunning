@@ -1,4 +1,10 @@
-﻿// CrashDebugger.cpp
+﻿/*
+a useful program to fight with pvz crash(only one file!)
+
+Copyright (c) 2024 github/why37281
+SPDX-License-Identifier: AGPL-3.0-only WITH Additional Permission prohibiting commercial use
+*/
+
 #define UNICODE
 #define _UNICODE
 
