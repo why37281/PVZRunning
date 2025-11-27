@@ -6,6 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only WITH Additional Permission prohibiting co
 */
 
 // code
+// test git
 #define UNICODE
 #define _UNICODE
 
