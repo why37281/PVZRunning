@@ -646,7 +646,7 @@ public:
     }
 
     void run() {
-        std::cout << "[START] Plants Vs Zombies 崩溃恢复调试器启动" << std::endl;
+        std::cout << "[START] Plants Vs Zombies 崩溃恢复调试器(v0.3-alpha)启动" << std::endl;
 
         // 初始化日志
         if (initializeLog()) {
