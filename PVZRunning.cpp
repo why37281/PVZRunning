@@ -9,6 +9,7 @@ SPDX-License-Identifier: AGPL-3.0-only WITH Additional Permission prohibiting co
 // test2
 #define UNICODE
 #define _UNICODE
+#define _CRT_SECURE_NO_WARNINGS
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -20,6 +21,13 @@ SPDX-License-Identifier: AGPL-3.0-only WITH Additional Permission prohibiting co
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <limits>  // 添加limits头文件
+#include <ctime>   // 添加ctime头文件
+
+// 定义缺失的异常代码
+#ifndef EXCEPTION_PRIVILEGED_INSTRUCTION
+#define EXCEPTION_PRIVILEGED_INSTRUCTION 0xC0000096
+#endif
 
 class ProcessDebugger {
 private:
@@ -47,7 +55,7 @@ public:
     }
 
     bool initializeLog() {
-        logFile.open("debug_log.txt", std::ios::out | std::ios::app);
+        logFile.open("log.txt", std::ios::out | std::ios::app);
         if (!logFile.is_open()) {
             std::cout << "[WARNING] 无法创建日志文件" << std::endl;
             return false;
@@ -60,7 +68,7 @@ public:
         // 如果文件太大，清空内容
         if (logFileSize >= MAX_LOG_SIZE) {
             logFile.close();
-            logFile.open("debug_log.txt", std::ios::out | std::ios::trunc);
+            logFile.open("log.txt", std::ios::out | std::ios::trunc);
             logFileSize = 0;
             std::cout << "[INFO] 日志文件过大，已清空" << std::endl;
         }
@@ -90,9 +98,13 @@ public:
         auto now = std::chrono::system_clock::now();
         auto time_t = std::chrono::system_clock::to_time_t(now);
 
-        std::string logEntry = "[" +
-            std::string(std::put_time(std::localtime(&time_t), "%H:%M:%S")) +
-            "] " + message;
+        struct tm timeInfo;
+        localtime_s(&timeInfo, &time_t);  // 使用安全的 localtime_s
+
+        char timeBuffer[20];
+        std::strftime(timeBuffer, sizeof(timeBuffer), "%H:%M:%S", &timeInfo);
+
+        std::string logEntry = "[" + std::string(timeBuffer) + "] " + message;
 
         // 检查写入后是否会超过限制
         if (logFileSize + logEntry.length() + 1 > MAX_LOG_SIZE) {
@@ -344,7 +356,7 @@ public:
 
             // 指令异常
         case EXCEPTION_ILLEGAL_INSTRUCTION:
-        case EXCEPTION_PRIVILEGED_INSTRUCTION:  // 0xC0000096
+        case 0xC0000096:  // EXCEPTION_PRIVILEGED_INSTRUCTION
         case EXCEPTION_NONCONTINUABLE_EXCEPTION:
             return handleInstructionException(debugEvent, threadId);
 
@@ -399,7 +411,7 @@ public:
         case EXCEPTION_INT_OVERFLOW: return "整数溢出";
         case EXCEPTION_INVALID_DISPOSITION: return "无效处置";
         case EXCEPTION_NONCONTINUABLE_EXCEPTION: return "不可继续异常";
-        case EXCEPTION_PRIVILEGED_INSTRUCTION: return "特权指令";  // 0xC0000096
+        case 0xC0000096: return "特权指令";  // EXCEPTION_PRIVILEGED_INSTRUCTION
         case EXCEPTION_STACK_OVERFLOW: return "栈溢出";
         case EXCEPTION_GUARD_PAGE: return "保护页";
         case EXCEPTION_SINGLE_STEP: return "单步执行";
@@ -451,7 +463,7 @@ public:
     DWORD handleInstructionException(const DEBUG_EVENT& debugEvent, DWORD threadId) {
         DWORD exceptionCode = debugEvent.u.Exception.ExceptionRecord.ExceptionCode;
 
-        if (exceptionCode == EXCEPTION_PRIVILEGED_INSTRUCTION) {  // 0xC0000096
+        if (exceptionCode == 0xC0000096) {  // EXCEPTION_PRIVILEGED_INSTRUCTION
             std::cout << "[INFO] 处理特权指令异常 (0xC0000096)" << std::endl;
             writeLog("INFO: 处理特权指令异常 (0xC0000096)");
         }
@@ -650,10 +662,10 @@ public:
 
         // 初始化日志
         if (initializeLog()) {
-            std::cout << "[INFO] 日志文件已创建: debug_log.txt (最大100kB)" << std::endl;
+            std::cout << "[INFO] 日志文件已创建: log.txt (最大100kB)" << std::endl;
         }
 
-        writeLog("START: Plants Vs Zombies 崩溃恢复调试器启动");
+        writeLog("START: Plants Vs Zombies 崩溃恢复调试器(v0.3-alpha)启动");
 
         // 启用监控模式
         setMonitorMode(true);
@@ -712,8 +724,11 @@ void printBanner() {
 int main() {
     printBanner();
 
+    char choice;
     std::cout << "[MONITOR] 是否启用详细输出 ( y / n ) :";
-    if (std::cin.get() == 'y') {
+    std::cin >> choice;
+
+    if (choice == 'y' || choice == 'Y') {
         std::cout << std::endl;
         std::cout << "[INFO] 详细输出已启用" << std::endl;
     }
@@ -723,12 +738,12 @@ int main() {
     }
 
     // 清除输入缓冲区中的换行符
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
 
     ProcessDebugger debugger(L"PlantsVsZombies.exe");
 
     // 设置详细输出模式
-    debugger.setVerboseOutput(std::cin.peek() == 'y');
+    debugger.setVerboseOutput(choice == 'y' || choice == 'Y');
 
     try {
         debugger.run();
