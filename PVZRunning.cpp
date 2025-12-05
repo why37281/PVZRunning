@@ -42,7 +42,8 @@ private:
     const long long MAX_LOG_SIZE = 100 * 1024; // 100kB
 
 public:
-    ProcessDebugger(const std::wstring& name = L"PlantsVsZombies.exe")
+    // ProcessDebugger(const std::wstring& name = L"PlantsVsZombies.exe")
+    ProcessDebugger(const std::wstring& name)
         : processId(0), processHandle(NULL), debugging(false),
         processName(name), monitorMode(false), verboseOutput(false), logFileSize(0) {
     }
@@ -658,14 +659,16 @@ public:
     }
 
     void run() {
-        std::cout << "[START] Plants Vs Zombies 崩溃恢复调试器(v0.3-alpha)启动" << std::endl;
+        // std::cout << "[START] Plants Vs Zombies 崩溃恢复调试器(v0.3-alpha)启动" << std::endl;
+        std::cout << "[START] 崩溃恢复调试器(v0.3-alpha 普适版)启动" << std::endl;
 
         // 初始化日志
         if (initializeLog()) {
             std::cout << "[INFO] 日志文件已创建: log.txt (最大100kB)" << std::endl;
         }
 
-        writeLog("START: Plants Vs Zombies 崩溃恢复调试器(v0.3-alpha)启动");
+        // writeLog("START: Plants Vs Zombies 崩溃恢复调试器(v0.3-alpha)启动");
+        writeLog("START: 崩溃恢复调试器(v0.3-alpha 普适版)启动");
 
         // 启用监控模式
         setMonitorMode(true);
@@ -739,8 +742,21 @@ int main() {
 
     // 清除输入缓冲区中的换行符
     std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
+    // ProcessDebugger debugger(L"PlantsVsZombies.exe");
 
-    ProcessDebugger debugger(L"PlantsVsZombies.exe");
+    std::string inputName;
+    std::wstring processName = L"PlantsVsZombies.exe"; // 默认值
+    std::cout << "[MONITOR] 请输入要附加的进程名 (默认为 PlantsVsZombies.exe): ";
+    std::getline(std::cin, inputName);
+
+    if (!inputName.empty()) {
+        // 将用户输入转换为宽字符串
+        processName = std::wstring(inputName.begin(), inputName.end());
+    }
+
+    std::wcout << L"[INFO] 目标进程: " << processName << std::endl;
+
+    ProcessDebugger debugger(processName);
 
     // 设置详细输出模式
     debugger.setVerboseOutput(choice == 'y' || choice == 'Y');
