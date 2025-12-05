@@ -16,7 +16,7 @@ PVZ改版基本都逃不掉一个宿敌——崩溃（技术高的大佬除外or
 
 ## License
 
-作者完全允许修改、发布，但是不允许将本代码用于商业活动，因为这违背了开源精神。
+作者完全允许修改、发布，但是不允许将本代码用于商业活动。
 
 This project is licensed under the AGPLv3 license with additional terms prohibiting commercial use.
 
