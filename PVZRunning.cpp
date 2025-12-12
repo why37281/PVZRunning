@@ -1,15 +1,8 @@
-﻿/*
-A useful program to combat PVZ and other software crashes(only one file!)
-
-Copyright (c) 2024 github/why37281
-SPDX-License-Identifier: AGPL-3.0-only WITH Additional Permission prohibiting commercial use
-*/
-
-// code
-// test2
+﻿// CrashDebugger.cpp
 #define UNICODE
 #define _UNICODE
 #define _CRT_SECURE_NO_WARNINGS
+#define NOMINMAX  // 避免Windows的min/max宏定义冲突
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -21,12 +14,17 @@ SPDX-License-Identifier: AGPL-3.0-only WITH Additional Permission prohibiting co
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <limits>  // 添加limits头文件
-#include <ctime>   // 添加ctime头文件
+#include <limits>
+#include <ctime>
 
 // 定义缺失的异常代码
 #ifndef EXCEPTION_PRIVILEGED_INSTRUCTION
 #define EXCEPTION_PRIVILEGED_INSTRUCTION 0xC0000096
+#endif
+
+// 线程命名异常 (MSVC调试器用于设置线程名)
+#ifndef EXCEPTION_MS_VC_THREAD_NAME
+#define EXCEPTION_MS_VC_THREAD_NAME 0x406D1388
 #endif
 
 class ProcessDebugger {
@@ -42,7 +40,6 @@ private:
     const long long MAX_LOG_SIZE = 100 * 1024; // 100kB
 
 public:
-    // ProcessDebugger(const std::wstring& name = L"PlantsVsZombies.exe")
     ProcessDebugger(const std::wstring& name)
         : processId(0), processHandle(NULL), debugging(false),
         processName(name), monitorMode(false), verboseOutput(false), logFileSize(0) {
@@ -79,7 +76,13 @@ public:
 
         logFile << "=== 调试日志开始 ===" << std::endl;
         logFile << "时间: " << std::ctime(&time_t);
-        logFile << "目标进程: " << std::string(processName.begin(), processName.end()) << std::endl;
+
+        // 将宽字符串转换为窄字符串用于日志
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, processName.c_str(), (int)processName.size(), NULL, 0, NULL, NULL);
+        std::string processNameA(size_needed, 0);
+        WideCharToMultiByte(CP_UTF8, 0, processName.c_str(), (int)processName.size(), &processNameA[0], size_needed, NULL, NULL);
+
+        logFile << "目标进程: " << processNameA << std::endl;
         logFile << "最大日志大小: " << MAX_LOG_SIZE / 1024 << "kB" << std::endl;
         logFile << "==========================================" << std::endl;
 
@@ -100,7 +103,7 @@ public:
         auto time_t = std::chrono::system_clock::to_time_t(now);
 
         struct tm timeInfo;
-        localtime_s(&timeInfo, &time_t);  // 使用安全的 localtime_s
+        localtime_s(&timeInfo, &time_t);
 
         char timeBuffer[20];
         std::strftime(timeBuffer, sizeof(timeBuffer), "%H:%M:%S", &timeInfo);
@@ -115,7 +118,7 @@ public:
         }
 
         logFile << logEntry << std::endl;
-        logFileSize += logEntry.length() + 1; // +1 for newline
+        logFileSize += logEntry.length() + 1;
 
         // 立即刷新以确保日志及时写入
         logFile.flush();
@@ -156,7 +159,7 @@ public:
         if (logFileSize >= MAX_LOG_SIZE) return;
 
         const EXCEPTION_RECORD& exception = debugEvent.u.Exception.ExceptionRecord;
-        BYTE buffer[64]; // 读取64字节
+        BYTE buffer[64];
         SIZE_T bytesRead = 0;
 
         // 计算读取的起始地址（向前32字节）
@@ -166,7 +169,6 @@ public:
             std::stringstream machineCode;
             machineCode << "异常地址附近的机器码 (地址: 0x" << std::hex << readAddress << "):" << std::endl;
 
-            // 以十六进制格式输出机器码
             for (SIZE_T i = 0; i < bytesRead; i += 16) {
                 machineCode << "  " << std::hex << std::setw(8) << std::setfill('0')
                     << (ULONG_PTR)readAddress + i << ": ";
@@ -193,7 +195,9 @@ public:
     DWORD FindProcessByName(const std::wstring& targetName) {
         HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (snapshot == INVALID_HANDLE_VALUE) {
-            if (verboseOutput) std::cout << "[INFO] 创建进程快照失败" << std::endl;
+            if (verboseOutput) {
+                std::cout << "[INFO] 创建进程快照失败" << std::endl;
+            }
             return 0;
         }
 
@@ -259,12 +263,16 @@ public:
         }
 
         std::wcout << L"[INFO] 找到进程: " << processName << L" (PID: " << processId << L")" << std::endl;
-        writeLog("找到进程: " + std::string(processName.begin(), processName.end()) + " (PID: " + std::to_string(processId) + ")");
+
+        // 转换宽字符串为窄字符串用于日志
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, processName.c_str(), (int)processName.size(), NULL, 0, NULL, NULL);
+        std::string processNameA(size_needed, 0);
+        WideCharToMultiByte(CP_UTF8, 0, processName.c_str(), (int)processName.size(), &processNameA[0], size_needed, NULL, NULL);
+        writeLog("找到进程: " + processNameA + " (PID: " + std::to_string(processId) + ")");
 
         if (!EnableDebugPrivilege()) {
             std::wcout << L"[WARNING] 无法启用调试权限，可能影响调试功能" << std::endl;
             writeLog("WARNING: 无法启用调试权限");
-            // 继续尝试，不一定需要调试权限
         }
 
         processHandle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, processId);
@@ -290,7 +298,12 @@ public:
 
     void waitForProcess() {
         std::wcout << L"[MONITOR] 正在等待进程 " << processName << L" 启动..." << std::endl;
-        writeLog("MONITOR: 等待进程启动");
+
+        // 转换宽字符串为窄字符串用于日志
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, processName.c_str(), (int)processName.size(), NULL, 0, NULL, NULL);
+        std::string processNameA(size_needed, 0);
+        WideCharToMultiByte(CP_UTF8, 0, processName.c_str(), (int)processName.size(), &processNameA[0], size_needed, NULL, NULL);
+        writeLog("MONITOR: 等待进程 " + processNameA + " 启动");
 
         while (true) {
             processId = FindProcessByName(processName);
@@ -309,88 +322,6 @@ public:
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
         std::cout << std::endl;
-    }
-
-    DWORD handleException(const DEBUG_EVENT& debugEvent) {
-        DWORD exceptionCode = debugEvent.u.Exception.ExceptionRecord.ExceptionCode;
-        DWORD threadId = debugEvent.dwThreadId;
-
-        // 检查是否是第一次断点异常（正常情况）
-        static bool firstBreakpoint = true;
-        if (exceptionCode == EXCEPTION_BREAKPOINT && firstBreakpoint) {
-            std::cout << "[INFO] 接收到初始断点（正常启动过程）" << std::endl;
-            writeLog("INFO: 接收到初始断点（正常启动过程）");
-            firstBreakpoint = false;
-            return DBG_CONTINUE;
-        }
-
-        std::string exceptionName = getExceptionName(exceptionCode);
-        std::cout << "[EXCEPTION] " << exceptionName << " (0x" << std::hex << exceptionCode << ")" << std::dec << std::endl;
-        writeLog("EXCEPTION: " + exceptionName + " (0x" + toHexString(exceptionCode) + ")");
-
-        // 记录异常详情到日志
-        writeExceptionDetails(debugEvent, exceptionName);
-
-        // 根据异常类型决定处理方式
-        switch (exceptionCode) {
-            // 内存访问异常
-        case EXCEPTION_ACCESS_VIOLATION:
-        case EXCEPTION_IN_PAGE_ERROR:
-        case EXCEPTION_GUARD_PAGE:
-        case EXCEPTION_DATATYPE_MISALIGNMENT:
-        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
-        case EXCEPTION_STACK_OVERFLOW:
-        case EXCEPTION_INVALID_DISPOSITION:
-            return handleMemoryException(debugEvent, threadId);
-
-            // 算术异常
-        case EXCEPTION_INT_DIVIDE_BY_ZERO:
-        case EXCEPTION_FLT_DIVIDE_BY_ZERO:
-        case EXCEPTION_INT_OVERFLOW:
-        case EXCEPTION_FLT_OVERFLOW:
-        case EXCEPTION_FLT_UNDERFLOW:
-        case EXCEPTION_FLT_INEXACT_RESULT:
-        case EXCEPTION_FLT_INVALID_OPERATION:
-        case EXCEPTION_FLT_DENORMAL_OPERAND:
-        case EXCEPTION_FLT_STACK_CHECK:
-            return handleArithmeticException(debugEvent, threadId);
-
-            // 指令异常
-        case EXCEPTION_ILLEGAL_INSTRUCTION:
-        case 0xC0000096:  // EXCEPTION_PRIVILEGED_INSTRUCTION
-        case EXCEPTION_NONCONTINUABLE_EXCEPTION:
-            return handleInstructionException(debugEvent, threadId);
-
-            // 调试异常
-        case EXCEPTION_BREAKPOINT:
-        case EXCEPTION_SINGLE_STEP:
-            return DBG_CONTINUE;
-
-            // .NET异常
-        case 0xE0434F4D: // CLR异常
-        case 0xE0434352: // CLR异常
-            std::cout << "[INFO] 处理CLR异常，尝试继续执行" << std::endl;
-            writeLog("INFO: 处理CLR异常，尝试继续执行");
-            return DBG_CONTINUE;
-
-            // C++异常
-        case 0xE06D7363: // Microsoft C++异常
-            std::cout << "[INFO] 处理C++异常，尝试继续执行" << std::endl;
-            writeLog("INFO: 处理C++异常，尝试继续执行");
-            return DBG_CONTINUE;
-
-        default:
-            // 检查是否是NTSTATUS代码
-            if ((exceptionCode & 0xFFFF0000) == 0xC0000000) {
-                std::cout << "[INFO] 处理NTSTATUS异常: 0x" << std::hex << exceptionCode << std::dec << std::endl;
-                writeLog("INFO: 处理NTSTATUS异常: 0x" + toHexString(exceptionCode));
-                return handleGenericException(debugEvent, threadId);
-            }
-
-            std::cout << "[WARNING] 未知异常类型" << std::endl;
-            writeLog("WARNING: 未知异常类型");
-            return DBG_EXCEPTION_NOT_HANDLED;
-        }
     }
 
     std::string getExceptionName(DWORD exceptionCode) {
@@ -412,16 +343,65 @@ public:
         case EXCEPTION_INT_OVERFLOW: return "整数溢出";
         case EXCEPTION_INVALID_DISPOSITION: return "无效处置";
         case EXCEPTION_NONCONTINUABLE_EXCEPTION: return "不可继续异常";
-        case 0xC0000096: return "特权指令";  // EXCEPTION_PRIVILEGED_INSTRUCTION
+        case EXCEPTION_PRIVILEGED_INSTRUCTION: return "特权指令";
         case EXCEPTION_STACK_OVERFLOW: return "栈溢出";
         case EXCEPTION_GUARD_PAGE: return "保护页";
         case EXCEPTION_SINGLE_STEP: return "单步执行";
+        case EXCEPTION_STACK_INVALID: return "栈无效";
+        case EXCEPTION_INVALID_HANDLE: return "无效句柄";
+        case 0xC0000194: return "可能死锁";  // EXCEPTION_POSSIBLE_DEADLOCK
+        case 0xC0000195: return "无效锁定序列";  // EXCEPTION_INVALID_LOCK_SEQUENCE
+        case 0xC000005C: return "无效读取";  // EXCEPTION_INVALID_READ
+        case 0xC000005D: return "无效写入";  // EXCEPTION_INVALID_WRITE
+        case 0xC000005E: return "无效用户缓冲区";  // EXCEPTION_INVALID_USER_BUFFER
+        case 0xC0000353: return "端口未设置";  // EXCEPTION_PORT_NOT_SET
+        case 0xC0000037: return "端口断开连接";  // EXCEPTION_PORT_DISCONNECTED
+        case 0xC0000208: return "地址已关联";  // EXCEPTION_ADDRESS_ALREADY_ASSOCIATED
+        case 0xC0000207: return "地址未关联";  // EXCEPTION_ADDRESS_NOT_ASSOCIATED
+        case 0xC0000206: return "断开连接";  // EXCEPTION_DISCONNECTED
+        case 0xC0000240: return "连接中止";  // EXCEPTION_CONNECTION_ABORTED
+        case 0xC0000242: return "连接无效";  // EXCEPTION_CONNECTION_INVALID
+        case 0xC0000041: return "连接被拒绝";  // EXCEPTION_CONNECTION_REFUSED
+
+            // 微软调试异常
+        case 0x406D1388: return "MSVC线程命名异常";
+
+            // .NET/CLR异常
         case 0xE0434F4D: return "CLR异常";
         case 0xE0434352: return "CLR异常";
-        case 0xE06D7363: return "C++异常";
+
+            // C++异常
+        case 0xE06D7363: return "Microsoft C++异常";
+
+            // Windows异常代码
+        case 0xC000000D: return "无效参数";
+        case 0xC0000017: return "无足够内存";
+        case 0xC0000035: return "模块名称无效";
+        case 0xC0000142: return "DLL初始化失败";
+        case 0xC000026B: return "DLL未找到";
+        case 0xC0000278: return "RPC服务器不可用";
+        case 0xC0000279: return "RPC服务器太忙";
+        case 0xC0000280: return "RPC调用在错误的线程上";
+        case 0xC0000281: return "RPC协议错误";
+        case 0xC00002B4: return "DLL初始化例程失败";
+        case 0xC00002B5: return "DLL未找到";
+        case 0xC00002C9: return "无效指令";
+        case 0xC00002CA: return "页保护冲突";
+        case 0xC0000409: return "缓冲区溢出";
+        case 0xC000041D: return "FATAL_USER_CALLBACK_EXCEPTION";
+
         default:
             if ((exceptionCode & 0xFFFF0000) == 0xC0000000) {
                 return "NTSTATUS异常";
+            }
+            else if ((exceptionCode & 0xFFFF0000) == 0x80000000) {
+                return "HRESULT异常";
+            }
+            else if (exceptionCode == 0xE06D7363) {
+                return "C++异常";
+            }
+            else if (exceptionCode == 0xE0434F4D || exceptionCode == 0xE0434352) {
+                return "CLR异常";
             }
             return "未知异常";
         }
@@ -431,6 +411,137 @@ public:
         std::stringstream ss;
         ss << std::hex << value;
         return ss.str();
+    }
+
+    DWORD handleException(const DEBUG_EVENT& debugEvent) {
+        DWORD exceptionCode = debugEvent.u.Exception.ExceptionRecord.ExceptionCode;
+        DWORD threadId = debugEvent.dwThreadId;
+
+        // 检查是否是第一次断点异常（正常情况）
+        static bool firstBreakpoint = true;
+        if (exceptionCode == EXCEPTION_BREAKPOINT && firstBreakpoint) {
+            std::cout << "[INFO] 接收到初始断点（正常启动过程）" << std::endl;
+            writeLog("INFO: 接收到初始断点（正常启动过程）");
+            firstBreakpoint = false;
+            return DBG_CONTINUE;
+        }
+
+        // 处理MSVC调试器用于设置线程名的异常
+        if (exceptionCode == 0x406D1388) {  // EXCEPTION_MS_VC_THREAD_NAME
+            if (verboseOutput) {
+                std::cout << "[INFO] 接收到线程命名异常，正常处理" << std::endl;
+                writeLog("INFO: 接收到线程命名异常 (0x406D1388)，正常处理");
+            }
+            return DBG_CONTINUE;
+        }
+
+        std::string exceptionName = getExceptionName(exceptionCode);
+        std::cout << "[EXCEPTION] " << exceptionName << " (0x" << std::hex << exceptionCode << ")" << std::dec << std::endl;
+        writeLog("EXCEPTION: " + exceptionName + " (0x" + toHexString(exceptionCode) + ")");
+
+        // 记录异常详情到日志
+        writeExceptionDetails(debugEvent, exceptionName);
+
+        // 根据异常类型决定处理方式
+        switch (exceptionCode) {
+            // 内存访问异常
+        case EXCEPTION_ACCESS_VIOLATION:
+        case EXCEPTION_IN_PAGE_ERROR:
+        case EXCEPTION_GUARD_PAGE:
+        case EXCEPTION_DATATYPE_MISALIGNMENT:
+        case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+        case EXCEPTION_STACK_OVERFLOW:
+        case EXCEPTION_INVALID_DISPOSITION:
+        case EXCEPTION_STACK_INVALID:
+        case EXCEPTION_INVALID_HANDLE:
+        case EXCEPTION_INVALID_READ:
+        case EXCEPTION_INVALID_WRITE:
+        case EXCEPTION_INVALID_USER_BUFFER:
+        case EXCEPTION_GUARD_VIOLATION:
+        case EXCEPTION_BUFFER_OVERFLOW:
+            return handleMemoryException(debugEvent, threadId);
+
+            // 算术异常
+        case EXCEPTION_INT_DIVIDE_BY_ZERO:
+        case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+        case EXCEPTION_INT_OVERFLOW:
+        case EXCEPTION_FLT_OVERFLOW:
+        case EXCEPTION_FLT_UNDERFLOW:
+        case EXCEPTION_FLT_INEXACT_RESULT:
+        case EXCEPTION_FLT_INVALID_OPERATION:
+        case EXCEPTION_FLT_DENORMAL_OPERAND:
+        case EXCEPTION_FLT_STACK_CHECK:
+        case EXCEPTION_FLT_DENORMAL_OPERATION:
+        case EXCEPTION_FLT_INVALID_PARAMETER:
+        case EXCEPTION_FLT_OVERFLOW_IN_UNDERFLOW:
+        case EXCEPTION_FLT_UNDERFLOW_IN_OVERFLOW:
+            return handleArithmeticException(debugEvent, threadId);
+
+            // 指令异常
+        case EXCEPTION_ILLEGAL_INSTRUCTION:
+        case EXCEPTION_PRIVILEGED_INSTRUCTION:  // 0xC0000096
+        case EXCEPTION_NONCONTINUABLE_EXCEPTION:
+        case EXCEPTION_INVALID_LOCK_SEQUENCE:
+        case EXCEPTION_INVALID_PARAMETER:
+        case EXCEPTION_SYSCALL_ERROR:
+            return handleInstructionException(debugEvent, threadId);
+
+            // 调试异常
+        case EXCEPTION_BREAKPOINT:
+        case EXCEPTION_SINGLE_STEP:
+        case EXCEPTION_BREAKPOINT_DEBUG:
+        case EXCEPTION_SINGLE_STEP_DEBUG:
+            return DBG_CONTINUE;
+
+            // 系统异常
+        case EXCEPTION_POSSIBLE_DEADLOCK:
+        case EXCEPTION_PORT_NOT_SET:
+        case EXCEPTION_PORT_DISCONNECTED:
+        case EXCEPTION_ADDRESS_ALREADY_ASSOCIATED:
+        case EXCEPTION_ADDRESS_NOT_ASSOCIATED:
+        case EXCEPTION_DISCONNECTED:
+        case EXCEPTION_CONNECTION_ABORTED:
+        case EXCEPTION_CONNECTION_INVALID:
+        case EXCEPTION_CONNECTION_REFUSED:
+            std::cout << "[INFO] 处理系统异常，尝试继续执行" << std::endl;
+            writeLog("INFO: 处理系统异常，尝试继续执行");
+            return DBG_CONTINUE;
+
+            // 调试器异常
+        case 0x406D1388:  // EXCEPTION_MS_VC_THREAD_NAME
+            return DBG_CONTINUE;
+
+            // .NET/CLR异常
+        case 0xE0434F4D: // CLR异常
+        case 0xE0434352: // CLR异常
+        case 0xE0434F4E: // CLR异常
+        case 0xE0434F4F: // CLR异常
+            std::cout << "[INFO] 处理CLR异常，尝试继续执行" << std::endl;
+            writeLog("INFO: 处理CLR异常，尝试继续执行");
+            return DBG_CONTINUE;
+
+            // C++异常
+        case 0xE06D7363: // Microsoft C++异常
+            std::cout << "[INFO] 处理C++异常，尝试继续执行" << std::endl;
+            writeLog("INFO: 处理C++异常，尝试继续执行");
+            return DBG_CONTINUE;
+
+        default:
+            // 检查是否是NTSTATUS代码
+            if ((exceptionCode & 0xFFFF0000) == 0xC0000000 ||
+                (exceptionCode & 0xFFFF0000) == 0x80000000 ||
+                exceptionCode == 0xE06D7363 ||
+                exceptionCode == 0xE0434F4D ||
+                exceptionCode == 0xE0434352) {
+                std::cout << "[INFO] 处理系统异常: 0x" << std::hex << exceptionCode << std::dec << std::endl;
+                writeLog("INFO: 处理系统异常: 0x" + toHexString(exceptionCode));
+                return handleGenericException(debugEvent, threadId);
+            }
+
+            std::cout << "[WARNING] 未知异常类型" << std::endl;
+            writeLog("WARNING: 未知异常类型");
+            return DBG_EXCEPTION_NOT_HANDLED;
+        }
     }
 
     DWORD handleMemoryException(const DEBUG_EVENT& debugEvent, DWORD threadId) {
@@ -464,7 +575,7 @@ public:
     DWORD handleInstructionException(const DEBUG_EVENT& debugEvent, DWORD threadId) {
         DWORD exceptionCode = debugEvent.u.Exception.ExceptionRecord.ExceptionCode;
 
-        if (exceptionCode == 0xC0000096) {  // EXCEPTION_PRIVILEGED_INSTRUCTION
+        if (exceptionCode == EXCEPTION_PRIVILEGED_INSTRUCTION) {  // 0xC0000096
             std::cout << "[INFO] 处理特权指令异常 (0xC0000096)" << std::endl;
             writeLog("INFO: 处理特权指令异常 (0xC0000096)");
         }
@@ -473,6 +584,12 @@ public:
     }
 
     DWORD handleGenericException(const DEBUG_EVENT& debugEvent, DWORD threadId) {
+        DWORD exceptionCode = debugEvent.u.Exception.ExceptionRecord.ExceptionCode;
+
+        // 对于未知异常，尝试跳过指令
+        std::cout << "[INFO] 尝试处理通用异常: 0x" << std::hex << exceptionCode << std::dec << std::endl;
+        writeLog("INFO: 尝试处理通用异常: 0x" + toHexString(exceptionCode));
+
         return skipFaultingInstruction(threadId);
     }
 
@@ -659,16 +776,14 @@ public:
     }
 
     void run() {
-        // std::cout << "[START] Plants Vs Zombies 崩溃恢复调试器(v0.3-alpha)启动" << std::endl;
-        std::cout << "[START] 崩溃恢复调试器(v0.3-alpha 普适版)启动" << std::endl;
+        std::cout << "[START] 崩溃恢复调试器(v0.4-beta)启动" << std::endl;
 
         // 初始化日志
         if (initializeLog()) {
             std::cout << "[INFO] 日志文件已创建: log.txt (最大100kB)" << std::endl;
         }
 
-        // writeLog("START: Plants Vs Zombies 崩溃恢复调试器(v0.3-alpha)启动");
-        writeLog("START: 崩溃恢复调试器(v0.3-alpha 普适版)启动");
+        writeLog("START: 崩溃恢复调试器(v0.4-beta)启动");
 
         // 启用监控模式
         setMonitorMode(true);
@@ -709,57 +824,79 @@ public:
 };
 
 void printBanner() {
-    /*
     std::cout << R"(
- ______ _   _  ______ ______                    _
-| ___ \| | | ||___  / | ___ \                  (_)
-| |_/ /| | | |   / /  | |_/ / _   _ __ _  __ _  _ __     __ _
-|  __/ | | | |  / /   |    / | | | | '_ \| '_ \| | '_ \ / _` |
-| |    \ \_/ /./ /___ | |\ \ | |_| | | | | | | | | | | | (_| |
-\_|     \___/ \_____/ \_| \_\ \__,_|_| |_|_| |_|_|_| |_|\__, |
-                                                         _/ |
-                                                        |___/
+╔══════════════════════════════════════════════════════════════════╗
+║          崩溃恢复调试器 v0.4-beta (通用版)                      ║
+║            支持任意Windows进程的异常捕获和恢复                 ║
+║                Copyright (c) 2024 github/why37281               ║
+║               SPDX-License-Identifier: AGPL-3.0-only            ║
+║          WITH Additional Permission prohibiting commercial use   ║
+╚══════════════════════════════════════════════════════════════════╝
     )" << std::endl;
-    */
-    return;
+}
+
+// 从控制台读取一行输入，支持中文
+std::wstring getWideStringInput() {
+    std::string input;
+    std::getline(std::cin, input);
+
+    if (input.empty()) {
+        return L"PlantsVsZombies.exe"; // 返回默认值
+    }
+
+    // 将UTF-8或ANSI字符串转换为宽字符串
+    int wlen = MultiByteToWideChar(CP_ACP, 0, input.c_str(), (int)input.length(), NULL, 0);
+    if (wlen == 0) {
+        return L"PlantsVsZombies.exe"; // 转换失败，返回默认值
+    }
+
+    std::wstring wstr(wlen, 0);
+    MultiByteToWideChar(CP_ACP, 0, input.c_str(), (int)input.length(), &wstr[0], wlen);
+
+    return wstr;
 }
 
 int main() {
     printBanner();
 
     char choice;
-    std::cout << "[MONITOR] 是否启用详细输出 ( y / n ) :";
-    std::cin >> choice;
+    std::cout << "[CONFIG] 是否启用详细输出 (y/n) [默认: n]: ";
+    choice = std::cin.get();
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
-    if (choice == 'y' || choice == 'Y') {
-        std::cout << std::endl;
-        std::cout << "[INFO] 详细输出已启用" << std::endl;
-    }
-    else {
-        std::cout << std::endl;
-        std::cout << "[INFO] 详细输出已禁用" << std::endl;
-    }
+    bool verbose = (choice == 'y' || choice == 'Y');
+    std::cout << std::endl << "[INFO] 详细输出已" << (verbose ? "启用" : "禁用") << std::endl;
 
-    // 清除输入缓冲区中的换行符
-    std::cin.ignore((std::numeric_limits<std::streamsize>::max)(), '\n');
-    // ProcessDebugger debugger(L"PlantsVsZombies.exe");
-
-    std::string inputName;
+    // 输入进程名
     std::wstring processName = L"PlantsVsZombies.exe"; // 默认值
-    std::cout << "[MONITOR] 请输入要附加的进程名 (默认为 PlantsVsZombies.exe): ";
-    std::getline(std::cin, inputName);
+    std::wstring inputName;
 
-    if (!inputName.empty()) {
-        // 将用户输入转换为宽字符串
-        processName = std::wstring(inputName.begin(), inputName.end());
+    std::cout << "[CONFIG] 请输入要附加的进程名 (默认为 PlantsVsZombies.exe): ";
+    inputName = getWideStringInput();
+
+    if (!inputName.empty() && inputName != L"PlantsVsZombies.exe") {
+        processName = inputName;
+    }
+
+    // 确保进程名有.exe扩展名
+    if (processName.size() < 4 || processName.substr(processName.size() - 4) != L".exe") {
+        processName += L".exe";
     }
 
     std::wcout << L"[INFO] 目标进程: " << processName << std::endl;
 
-    ProcessDebugger debugger(processName);
+    // 显示提示信息
+    std::cout << std::endl << "==========================================" << std::endl;
+    std::cout << "[提示]" << std::endl;
+    std::cout << "1. 确保目标进程已启动" << std::endl;
+    std::cout << "2. 调试器会尝试自动附加" << std::endl;
+    std::cout << "3. 当目标进程崩溃时，会自动跳过崩溃指令" << std::endl;
+    std::cout << "4. 详细输出模式会显示更多调试信息" << std::endl;
+    std::cout << "5. 按Ctrl+C可退出调试器" << std::endl;
+    std::cout << "==========================================" << std::endl << std::endl;
 
-    // 设置详细输出模式
-    debugger.setVerboseOutput(choice == 'y' || choice == 'Y');
+    ProcessDebugger debugger(processName);
+    debugger.setVerboseOutput(verbose);
 
     try {
         debugger.run();
